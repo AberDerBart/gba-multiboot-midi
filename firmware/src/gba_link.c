@@ -199,8 +199,11 @@ bool gba_link_upload(const char *rom, size_t size) {
 }
 
 uint16_t transfer16_normal(uint16_t msg) {
-  uint32_t reply = transfer32_normal((uint32_t)msg & 0xffff);
-  return (uint16_t)(reply >> 16);
+  reply16_multi_t reply = transfer16_multi(msg);
+  
+  return reply.msgs[0];
+  //uint32_t reply = transfer32_normal((uint32_t)msg & 0xffff);
+  //return (uint16_t)(reply >> 16);
 }
 
 absolute_time_t bit_time_offset(absolute_time_t start, size_t bit) {
@@ -215,7 +218,7 @@ void send16_multi(uint16_t msg) {
 
   // send bits
   for (size_t i = 0; i < 16; i++) {
-    bool bit = (msg >> (15 - i)) & 1;
+    bool bit = (msg >> i) & 1;
     busy_wait_until(bit_time_offset(start, i + 1));
     gpio_put(SD_PIN, bit);
   }
@@ -253,7 +256,7 @@ bool recv16_multi(uint16_t* dst, uint8_t timeout_us) {
   for (size_t i = 0; i < 16; i++) {
     busy_wait_until(bit_time_offset(t0, i + 1));
     uint16_t bit = gpio_get(SD_PIN);
-    tmp |= bit << (15 - i);
+    tmp |= bit << i;
   }
   // wait for middle of stop bit
   // we can wait for the end of it in the next call
