@@ -25,6 +25,7 @@
           
           pkgs.rtmidi
           pkgs.alsa-utils
+          pkgs.minicom
         ];
 
         PICO_SDK_PATH = "${pico-sdk-full}/lib/pico-sdk";
