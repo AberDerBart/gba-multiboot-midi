@@ -1,10 +1,16 @@
 #include "gba_link.h"
 #include "pico/time.h"
+#include <hardware/sync.h>
 #include <stdint.h>
+#include <stdio.h>
 #include "hardware/gpio.h"
+
 #define SO_PIN 2
 #define SI_PIN 3
 #define SC_PIN 4
+
+#define BAUD_RATE 115200
+#define SD_PIN 5
 
 void gba_link_init() {
   gpio_init(SC_PIN);
@@ -12,21 +18,35 @@ void gba_link_init() {
 
   gpio_init(SO_PIN);
   gpio_set_dir(SO_PIN, false);
+  gpio_pull_up(SO_PIN);
 
   gpio_init(SI_PIN);
   gpio_set_dir(SI_PIN, true);
+  gpio_put(SI_PIN, true);
+
+  gpio_init(SD_PIN);
+  gpio_set_dir(SD_PIN, false);
+  gpio_pull_up(SD_PIN);
 }
 
-uint16_t transfer16(uint16_t);
-uint32_t transfer32(uint32_t);
+typedef struct reply16_multi_t {
+  uint16_t msgs[3];
+  size_t player_count;
+} reply16_multi_t;
 
-bool gba_link_upload(char *rom, size_t size) {
+reply16_multi_t transfer16_multi(uint16_t);
+uint16_t transfer16_normal(uint16_t);
+uint32_t transfer32_normal(uint32_t);
+
+bool gba_link_upload(const char *rom, size_t size) {
   uint16_t r;
 
   // Send connection request, wait for slave to enter Normal mode
-  uint8_t count = 0;
+  printf("GBA link: sending connection request\n");
+
   while (true) {
-    r = transfer16(0x6202);
+    r = transfer16_normal(0x6202);
+    printf(".");
 
     // Check whether slave has entered correct mode, recognition okay
     if ((r & 0xfff0) == 0x7200) {
@@ -35,29 +55,27 @@ bool gba_link_upload(char *rom, size_t size) {
         return false;
       break;
     }
-
-    // Blink blue while waiting
-    // gpio_put(LED_BLUE, count & 8 ? HIGH : LOW);
-    count += 1;
+    printf("%04x\n", r);
 
     // Wait a bit before trying again
-    sleep_ms(1000 / 16);
+    sleep_ms(5);
   }
 
   // Blue during transmission
   // gpio_put(LED_BLUE, LOW);
 
   // Exchange master/slave info
-  r = transfer16(0x6102);
+  r = transfer16_normal(0x6102);
   if (r != 0x7202)
     return false;
 
   // Send header
+  printf("GBA link: sending header\n");
   for (size_t i = 0; i < 0xc0; i += 2) {
 
     // Send 2 bytes at a time
     uint16_t xxxx = (uint16_t)rom[i] | (uint16_t)rom[i + 1] << 8;
-    r = transfer16(xxxx);
+    r = transfer16_normal(xxxx);
 
     // Slave replies with index and id
     if (((r >> 8) & 0xff) != (0xc0 - i) / 2)
@@ -67,12 +85,12 @@ bool gba_link_upload(char *rom, size_t size) {
   }
 
   // Transfer is complete
-  r = transfer16(0x6200);
+  r = transfer16_normal(0x6200);
   if (r != 2)
     return false;
 
   // Exchange master/slave info (again)
-  r = transfer16(0x6202);
+  r = transfer16_normal(0x6202);
   if (r != 0x7202)
     return false;
 
@@ -81,7 +99,7 @@ bool gba_link_upload(char *rom, size_t size) {
 
   // Wait until slave is ready
   while (true) {
-    r = transfer16(0x6300 | pp);
+    r = transfer16_normal(0x6300 | pp);
     if ((r & 0xff00) == 0x7300)
       break;
   }
@@ -93,16 +111,18 @@ bool gba_link_upload(char *rom, size_t size) {
   uint8_t hh = (0x11 + cc + 0xff + 0xff) & 0xff;
 
   // Send handshake
-  r = transfer16(0x6400 | hh);
+  r = transfer16_normal(0x6400 | hh);
   if ((r & 0xff00) != 0x7300)
     return false;
 
   // Wait a bit
   sleep_ms(1000 / 16);
 
+  printf("GBA link: sending payload\n");
+
   // Send length information
   uint16_t llll = (size - 0xc0) / 4 - 0x34;
-  r = transfer16(llll);
+  r = transfer16_normal(llll);
   if ((r & 0xff00) != 0x7300)
     return false;
   uint8_t rr = r & 0xff;
@@ -132,7 +152,7 @@ bool gba_link_upload(char *rom, size_t size) {
     m = 0x6f646573 * m + 1;
     uint32_t complement = -(uint32_t)0x2000000 - (uint32_t)i;
     uint32_t yyyyyyyy = data ^ complement ^ m ^ k;
-    r = transfer32(yyyyyyyy) >> 16;
+    r = transfer32_normal(yyyyyyyy) >> 16;
 
     // Client replies with lower bits of destination address
     if (r != (i & 0xffff))
@@ -149,13 +169,13 @@ bool gba_link_upload(char *rom, size_t size) {
   }
 
   // Client just acknowledged the last bits
-  r = transfer16(0x0065);
+  r = transfer16_normal(0x0065);
   if (r != (size & 0xffff))
     return false;
 
   // Wait until all slaves are ready for CRC transfer
   while (true) {
-    r = transfer16(0x0065);
+    r = transfer16_normal(0x0065);
     if (r == 0x0075)
       break;
     if (r != 0x0074)
@@ -163,25 +183,124 @@ bool gba_link_upload(char *rom, size_t size) {
   }
 
   // Signal that CRC will follow
-  r = transfer16(0x0066);
+  r = transfer16_normal(0x0066);
   if (r != 0x0075)
     return false;
 
   // Exchange CRC
-  r = transfer16((uint16_t)(c & 0xffff));
+  r = transfer16_normal((uint16_t)(c & 0xffff));
   if (r != c)
     return false;
+
+  printf("GBA link: ROM sent\n");
 
   // Success!
   return true;
 }
 
-uint16_t transfer16(uint16_t msg) {
-  uint32_t reply = transfer32((uint32_t)msg & 0xffff);
+uint16_t transfer16_normal(uint16_t msg) {
+  uint32_t reply = transfer32_normal((uint32_t)msg & 0xffff);
   return (uint16_t)(reply >> 16);
 }
 
-uint32_t transfer32(uint32_t msg) {
+absolute_time_t bit_time_offset(absolute_time_t start, size_t bit) {
+  return delayed_by_us(start, 1000000 * bit / BAUD_RATE);
+}
+
+void send16_multi(uint16_t msg) {
+  gpio_set_dir(SD_PIN, true);
+  absolute_time_t start = get_absolute_time();
+  // send start bit
+  gpio_put(SD_PIN, false);
+
+  // send bits
+  for (size_t i = 0; i < 16; i++) {
+    bool bit = (msg >> (15 - i)) & 1;
+    busy_wait_until(bit_time_offset(start, i + 1));
+    gpio_put(SD_PIN, bit);
+  }
+  busy_wait_until(bit_time_offset(start, 17));
+  // send stop bit
+  gpio_put(SD_PIN, true);
+
+  busy_wait_until(bit_time_offset(start, 18));
+}
+
+bool recv16_multi(uint16_t* dst, uint8_t timeout_us) {
+  uint16_t tmp = 0x0000;
+  gpio_set_dir(SD_PIN, false);
+  
+  // wait for start bit
+  absolute_time_t timeout = make_timeout_time_us(timeout_us);
+
+  bool start_bit_stable = false;
+  while (!start_bit_stable) {
+    while (gpio_get(SD_PIN)) {
+      if (to_us_since_boot(get_absolute_time()) > to_us_since_boot(timeout)){
+        return false;
+      }
+    }
+    // wait for half a bit to check if start bit is stable
+    busy_wait_us(1000000 / BAUD_RATE / 2);
+    start_bit_stable = !gpio_get(SD_PIN);
+  }
+
+  // this is referencing the half point of the bit
+  // as we waited half a bits transfer time during start bit detection
+  absolute_time_t t0 = get_absolute_time();
+  
+  // read bits
+  for (size_t i = 0; i < 16; i++) {
+    busy_wait_until(bit_time_offset(t0, i + 1));
+    uint16_t bit = gpio_get(SD_PIN);
+    tmp |= bit << (15 - i);
+  }
+  // wait for middle of stop bit
+  // we can wait for the end of it in the next call
+  busy_wait_until(bit_time_offset(t0, 17));
+  // TODO: validate stop bit
+
+  *dst = tmp;
+  return true;
+}
+
+
+reply16_multi_t transfer16_multi(uint16_t msg) {
+  reply16_multi_t result = {
+    .msgs = { 0x0000, 0x0000, 0x0000 },
+    .player_count = 0,
+  };
+
+  uint32_t irq = save_and_disable_interrupts();
+
+  while (!gpio_get(SD_PIN)) {
+    // Wait for ready signal (nobody is pulling SD low)
+  }
+  // signal start of transfer
+  gpio_put(SC_PIN, false);
+  // signal that the master is sending
+  gpio_put(SI_PIN, true);
+  //send data
+  send16_multi(msg);
+  // signal that the master is done sending
+  gpio_put(SI_PIN, false);
+  //receive data
+  for (size_t i = 0; i < 3; i++){
+    if (!recv16_multi(&(result.msgs[i]), 250)) {
+      break;
+    }
+    result.player_count++;
+  }
+  // signal end of transfer
+  gpio_put(SC_PIN, true);
+  gpio_put(SI_PIN, true);
+
+  restore_interrupts(irq);
+
+  return result;
+}
+
+uint32_t transfer32_normal(uint32_t msg) {
   uint32_t reply = 0;
 
   // Send bits, from most- to least-significant
