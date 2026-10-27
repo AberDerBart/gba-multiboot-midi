@@ -1,16 +1,25 @@
 #include <stdio.h>
+#include "pico/stdio.h"
 
 #include "midi.h"
 #include "midi_ble.h"
-#include "pico/stdlib.h"
-
+#include "gba_link.h"
 
 int main(void) {
 
+  stdio_init_all();
+
   midi_init();
   midi_ble_init();
+  gba_link_init();
 
-  printf("init\n");
+  printf("initialized\n");
+
+  if (gba_link_upload()){
+    printf("upload success\n");
+  }else{
+    printf("upload falied\n");
+  }
 
   while (1) {
   }

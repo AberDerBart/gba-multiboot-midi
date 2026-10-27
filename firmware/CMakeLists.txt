@@ -43,6 +43,7 @@ add_executable(${target_name}
         src/midi.c
         src/midi_ble.c
         src/gba_link.c
+        src/rom.c
 )
 
 target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
@@ -51,6 +52,8 @@ target_link_libraries(
         ${target_name}
         pico_stdlib
         hardware_pwm
+        hardware_flash
+        pico_flash
         pico_btstack_ble
         pico_btstack_cyw43
         pico_cyw43_arch_none

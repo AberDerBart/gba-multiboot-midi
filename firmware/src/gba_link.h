@@ -5,6 +5,6 @@
 
 void gba_link_init();
 
-bool gba_link_upload(const char* rom, size_t size);
+bool gba_link_upload();
 
 void gba_link_send();

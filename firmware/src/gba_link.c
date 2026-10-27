@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "hardware/gpio.h"
+#include "rom.h"
 
 #define SO_PIN 2
 #define SI_PIN 3
@@ -38,7 +39,12 @@ reply16_multi_t transfer16_multi(uint16_t);
 uint16_t transfer16_normal(uint16_t);
 uint32_t transfer32_normal(uint32_t);
 
-bool gba_link_upload(const char *rom, size_t size) {
+bool gba_link_upload() {
+  uint32_t size = rom_get_size();
+  if (size < 0xc0) {
+    printf("rom not available");
+    return false;
+  }
   uint16_t r;
 
   // Send connection request, wait for slave to enter Normal mode
@@ -78,18 +84,25 @@ bool gba_link_upload(const char *rom, size_t size) {
     r = transfer16_normal(xxxx);
 
     // Slave replies with index and id
-    if (((r >> 8) & 0xff) != (0xc0 - i) / 2)
+    if (((r >> 8) & 0xff) != (0xc0 - i) / 2) {
+      printf("counter does not match, want %d, got %d\n",(0xc0 -i), (r >> 8) & 0xff);
       return false;
-    if ((r & 0xff) != 2)
+    }
+    if ((r & 0xff) != 2) {
+      printf("client id does not match, got %d\n", r & 0xff);
       return false;
+    }
   }
 
+
+  printf("header transfer complete\n");
   // Transfer is complete
   r = transfer16_normal(0x6200);
   if (r != 2)
     return false;
 
   // Exchange master/slave info (again)
+  printf("exchange parent client info again\n");
   r = transfer16_normal(0x6202);
   if (r != 0x7202)
     return false;
@@ -97,6 +110,7 @@ bool gba_link_upload(const char *rom, size_t size) {
   // Choose palette
   uint8_t pp = 0xd1;
 
+  printf("send palette data\n");
   // Wait until slave is ready
   while (true) {
     r = transfer16_normal(0x6300 | pp);
@@ -104,12 +118,14 @@ bool gba_link_upload(const char *rom, size_t size) {
       break;
   }
 
+
   // Random client data
   uint8_t cc = r & 0xff;
 
   // Compute handshake data
   uint8_t hh = (0x11 + cc + 0xff + 0xff) & 0xff;
 
+  printf("send handshake\n");
   // Send handshake
   r = transfer16_normal(0x6400 | hh);
   if ((r & 0xff00) != 0x7300)
@@ -128,9 +144,9 @@ bool gba_link_upload(const char *rom, size_t size) {
   uint8_t rr = r & 0xff;
 
   // Send encrypted payload
-  uint32_t c = 0x0000c387;
-  uint32_t x = 0x0000c37b;
-  uint32_t k = 0x43202f2f;
+  uint32_t c = 0x0000fff8;
+  uint32_t x = 0x0000a517;
+  uint32_t k = 0x6465646f;
   uint32_t m = 0xffff0000 | cc << 8 | pp;
   uint32_t f = 0xffff0000 | rr << 8 | hh;
   for (size_t i = 0xc0; i < size; i += 4) {
@@ -152,12 +168,21 @@ bool gba_link_upload(const char *rom, size_t size) {
     m = 0x6f646573 * m + 1;
     uint32_t complement = -(uint32_t)0x2000000 - (uint32_t)i;
     uint32_t yyyyyyyy = data ^ complement ^ m ^ k;
-    r = transfer32_normal(yyyyyyyy) >> 16;
-
+    
+    r = transfer16_normal(yyyyyyyy & 0xFFFF);
     // Client replies with lower bits of destination address
-    if (r != (i & 0xffff))
+    if (r != i) {
+      printf("address mismatch want %d got %d\n", i, r);
       return false;
+    }
+    r = transfer16_normal(yyyyyyyy >> 16);
+    // Client replies with lower bits of destination address
+    if (r != i + 2) {
+      printf("2nd word address mismatch want %d got %d\n", i + 2, r);
+      return false;
+    }
   }
+  printf("final checksum update\n");
 
   // Final checksum update
   c ^= f;
@@ -170,9 +195,12 @@ bool gba_link_upload(const char *rom, size_t size) {
 
   // Client just acknowledged the last bits
   r = transfer16_normal(0x0065);
-  if (r != (size & 0xffff))
+  if (r != (size & 0xffff)) {
+    printf("checksum reply failed, want %d, got %d\n", size & 0xffff, r);
     return false;
+  }
 
+  printf("wait for CRC transfer\n");
   // Wait until all slaves are ready for CRC transfer
   while (true) {
     r = transfer16_normal(0x0065);
@@ -182,15 +210,20 @@ bool gba_link_upload(const char *rom, size_t size) {
       return false;
   }
 
+  printf("signal CRC\n");
+
   // Signal that CRC will follow
   r = transfer16_normal(0x0066);
   if (r != 0x0075)
     return false;
 
+  printf("exchange RCR\n");
   // Exchange CRC
   r = transfer16_normal((uint16_t)(c & 0xffff));
-  if (r != c)
+  if (r != c) {
+    printf("CRC failed, want %04x, got %04x\n", c, r);
     return false;
+  }
 
   printf("GBA link: ROM sent\n");
 
@@ -299,6 +332,8 @@ reply16_multi_t transfer16_multi(uint16_t msg) {
   gpio_put(SI_PIN, true);
 
   restore_interrupts(irq);
+
+  busy_wait_us(36);
 
   return result;
 }
