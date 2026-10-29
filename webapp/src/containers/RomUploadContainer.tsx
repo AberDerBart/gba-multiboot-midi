@@ -69,5 +69,6 @@ export default function RomUploadContainer() {
       }}
     />
     <button onClick={upload} disabled={!rom || !serial || isUploading}>Upload</button>
+    {isUploading && <div>Uploading…</div>}
   </div>
 }
