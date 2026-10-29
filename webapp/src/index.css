@@ -3,3 +3,21 @@
 body {
   margin: 0;
 }
+
+button {
+  cursor: pointer;
+
+  font: inherit;
+  color: inherit;
+
+  appearance: none;
+  background: darkcyan;
+  border: 1px solid black;
+  border-radius: 0.5rem;
+  height: 2rem;
+  padding-inline: 0.5rem;
+
+  &:disabled {
+    color: gray;
+  }
+}

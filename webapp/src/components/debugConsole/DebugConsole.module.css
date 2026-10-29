@@ -1,0 +1,16 @@
+.Output {
+  width: 100%;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+
+.InputLine {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.CmdInput {
+  flex-grow: 1;
+}

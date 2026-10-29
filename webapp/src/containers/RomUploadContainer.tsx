@@ -1,4 +1,5 @@
 import { useCallback, useState } from "react"
+import DebugConsole from "../components/debugConsole/DebugConsole";
 
 export default function RomUploadContainer() {
 
@@ -8,9 +9,34 @@ export default function RomUploadContainer() {
   const [isUploading, setIsUploading] = useState(false);
 
   const [rom, setRom] = useState<File>();
+  const [output, setOutput] = useState("");
+
+  const sendCmd = useCallback(async (cmd: string) => {
+    if (!serial?.writable) {
+      return;
+    }
+    const writer = serial.writable.getWriter();
+    await writer.write(new TextEncoder().encode(`${cmd}\n`));
+    writer.releaseLock();
+  }, []);
 
   const selectDevice = useCallback(async () => {
-    setSerial(await navigator.serial.requestPort());
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 115200 });
+    await port.setSignals({ dataTerminalReady: true });
+    setSerial(port);
+
+    // read forever and append to the textarea
+    const reader = port.readable!.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      console.log("waiting for data");
+      const { value, done } = await reader.read();
+      console.log("breaking");
+      if (done) break;
+      console.log("read", value);
+      setOutput((o) => o + decoder.decode(value));
+    }
   }, [])
 
   const upload = useCallback(async () => {
@@ -22,7 +48,6 @@ export default function RomUploadContainer() {
 
     setIsUploading(true);
 
-    await serial.open({ baudRate: 115200 });
     try {
       if (!serial.writable) {
         console.error("serial is not writable");
@@ -40,12 +65,11 @@ export default function RomUploadContainer() {
       await writer.releaseLock();
 
       // send data
-      await rom.stream().pipeTo(serial.writable)
+      await rom.stream().pipeTo(serial.writable, { preventClose: true })
     } catch (e) {
       console.error(e)
       setError(JSON.stringify(e));
     } finally {
-      await serial.close();
       setIsUploading(false);
     }
   }, [serial, rom]);
@@ -70,5 +94,6 @@ export default function RomUploadContainer() {
     />
     <button onClick={upload} disabled={!rom || !serial || isUploading}>Upload</button>
     {isUploading && <div>Uploading…</div>}
+    <DebugConsole sendCmd={sendCmd} output={output} />
   </div>
 }
