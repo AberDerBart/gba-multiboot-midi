@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "cmd.h"
 #include "pico/stdio.h"
 
 #include "midi.h"
@@ -22,6 +23,7 @@ int main(void) {
   }
 
   while (1) {
+    cmd_task();
   }
 
   return 0;

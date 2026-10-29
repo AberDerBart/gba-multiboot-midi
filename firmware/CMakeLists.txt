@@ -44,6 +44,8 @@ add_executable(${target_name}
         src/midi_ble.c
         src/gba_link.c
         src/rom.c
+        src/serial.c
+        src/cmd.c
 )
 
 target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)

@@ -1,4 +1,5 @@
 #include "rom.h"
+#include "serial.h"
 #include <pico/stdio.h>
 #include <pico/stdio_usb.h>
 #include <hardware/flash.h>
@@ -48,17 +49,17 @@ void flash_erase_header(void* _) {
   flash_range_erase(FLASH_HEADER_OFFSET, FLASH_SECTOR_SIZE);
 }
 
-static uint8_t buffer[FLASH_SECTOR_SIZE];
 
 void flash_write_sector(void* param) {
   uint32_t* page_offset = param;
   flash_range_erase(*page_offset, FLASH_SECTOR_SIZE);
-  flash_range_program(*page_offset, buffer, FLASH_SECTOR_SIZE);
+  flash_range_program(*page_offset, serial_buffer, FLASH_SECTOR_SIZE);
 }
 
 void flash_write_header(void* header) {
-  memcpy(buffer, header, sizeof(rom_header_t));
-  flash_range_program(FLASH_HEADER_OFFSET, buffer, FLASH_PAGE_SIZE);
+  memset(serial_buffer, 0xff, FLASH_PAGE_SIZE);
+  memcpy(serial_buffer, header, sizeof(rom_header_t));
+  flash_range_program(FLASH_HEADER_OFFSET, serial_buffer, FLASH_PAGE_SIZE);
 }
 
 bool rom_upload_stdio() {
@@ -96,10 +97,10 @@ bool rom_upload_stdio() {
       if (c != (0xff & c)) {
         return false;
       }
-      buffer[i] = c & 0xff;
+      serial_buffer[i] = c & 0xff;
     }
     if (i < FLASH_SECTOR_SIZE) {
-      memset(&buffer[i], 0, FLASH_SECTOR_SIZE-i);
+      memset(&serial_buffer[i], 0, FLASH_SECTOR_SIZE-i);
     }
     if (flash_safe_execute(flash_write_sector, &page_offset, 100) != PICO_OK) {
       return false;
@@ -107,10 +108,8 @@ bool rom_upload_stdio() {
     page_offset += FLASH_SECTOR_SIZE;
     remaining -= i;
   }
-
+  
   // write header to flash
-  memset(buffer, 0xff, FLASH_PAGE_SIZE);
-  memcpy(buffer, &header, sizeof(header));
   if (flash_safe_execute(flash_write_header, &header, 100) != PICO_OK) {
     return false;
   }

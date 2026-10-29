@@ -45,6 +45,10 @@ bool gba_link_upload() {
     printf("rom not available");
     return false;
   }
+
+  // align rom size
+  size = (size + 0x0f) & ~0x0f;
+
   uint16_t r;
 
   // Send connection request, wait for slave to enter Normal mode
